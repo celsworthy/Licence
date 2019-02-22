@@ -12,6 +12,7 @@ import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.Enumeration;
 import java.util.Optional;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -173,9 +174,37 @@ public class NoHardwareLicenceTimer {
     }
     
     private byte[] determineMacAddress() throws IOException {
-        InetAddress ip;	
-        ip = InetAddress.getLocalHost();
-        NetworkInterface network = NetworkInterface.getByInetAddress(ip);
-        return network.getHardwareAddress();	
+        byte[] macAddress = null;
+        try {
+            InetAddress address = InetAddress.getLocalHost();
+            NetworkInterface adapter = NetworkInterface.getByInetAddress(address);
+            if (adapter != null)
+                macAddress = adapter.getHardwareAddress();
+
+            // Sometimes the previous code does not work on. This is another attempt.
+            if (macAddress == null) {
+                Enumeration<NetworkInterface> adapters = NetworkInterface.getNetworkInterfaces();
+                while (macAddress == null && adapters.hasMoreElements()) {
+                    adapter = adapters.nextElement();
+                    Enumeration<InetAddress> addresses = adapter.getInetAddresses();
+                    while (macAddress == null && addresses.hasMoreElements()) {
+                        address = addresses.nextElement();
+                        if (address.isLinkLocalAddress())
+                            macAddress = adapter.getHardwareAddress();
+                    }
+                }
+            }
+
+        }
+        catch (Exception ex) {
+            macAddress = null;
+        }
+
+        if (macAddress == null) {
+            // If all else fails, use a hard-wired "fake" address.
+            macAddress = new byte[] { (byte)0x52, (byte)0x6F, (byte)0x62,
+                                      (byte)0x6F, (byte)0x78, (byte)0x24 };    
+        }
+        return macAddress;
     }
 }
