@@ -21,6 +21,7 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
@@ -223,6 +224,10 @@ public class NoHardwareLicenceTimer
             final String message = new String(encodedMessage, Charset.forName("UTF-8"));
 
             return Optional.of(message);
+        } catch (AEADBadTagException ex)
+        {
+            // This is an expected case when a Mac address is not the key for this line
+            return Optional.empty();
         } catch (GeneralSecurityException | IOException ex) 
         {
             STENO.exception("Error occured during decryption of timer file", ex);
