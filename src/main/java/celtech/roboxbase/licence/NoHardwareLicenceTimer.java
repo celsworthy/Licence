@@ -265,6 +265,14 @@ public class NoHardwareLicenceTimer
             STENO.exception("Error occured during decryption of timer file", ex);
         }
         
+        if (macAddresses.isEmpty())
+        {
+            // If all else fails, use a hard-wired "fake" address.
+            byte[] macAddress = new byte[] { (byte)0x52, (byte)0x6F, (byte)0x62,
+                                      (byte)0x6F, (byte)0x78, (byte)0x24 }; 
+            macAddresses.add(macAddress);
+        }
+        
         return macAddresses;
     }
 }
