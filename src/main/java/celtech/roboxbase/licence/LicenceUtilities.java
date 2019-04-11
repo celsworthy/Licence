@@ -7,21 +7,17 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
-import java.security.InvalidKeyException;
+import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
-import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
-import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
 import libertysystems.stenographer.Stenographer;
 import libertysystems.stenographer.StenographerFactory;
 import org.apache.commons.codec.binary.Base64;
@@ -59,7 +55,7 @@ public class LicenceUtilities
             KeyFactory kf = KeyFactory.getInstance("RSA");
             return kf.generatePublic(spec);
         } 
-        catch (InvalidKeySpecException | NoSuchAlgorithmException | IOException ex) 
+        catch (GeneralSecurityException | IOException ex) 
         {
             STENO.exception("An error occured when getting the public key", ex);
         }
@@ -70,7 +66,7 @@ public class LicenceUtilities
     {
         STENO.trace("Begining read of encrypted licence file");
         
-        String licenceText;
+        String licenceText = null;
         
         try (BufferedReader bufferedReader = new BufferedReader(new FileReader(encryptedLicenceFile))) 
         {
@@ -79,62 +75,72 @@ public class LicenceUtilities
             PublicKey publicKey = getPublic();
             while(line != null) 
             {
-                stringBuilder.append(decryptLine(line, publicKey));
-                stringBuilder.append("\n");
+                String decryptedLine = decryptLine(line, publicKey);
+                if (decryptedLine != null)
+                {
+                    stringBuilder.append(decryptLine(line, publicKey));
+                    stringBuilder.append("\n");
+                }
                 line = bufferedReader.readLine();
             }
             licenceText = stringBuilder.toString();
-        } catch (IOException ex)
+        }
+        catch (IOException ex)
         {
             STENO.exception("Unexpected exception while trying to read licence file", ex);
-            return Optional.empty();
         }
         
-        if(licenceText == null) 
+        if (licenceText != null) 
         {
-            return Optional.empty();
-        }
-        String[] licenceInfo = licenceText.split("\\r?\\n");
-        
-        String owner = "";
-        String licenceEndDateString = "";
-        List<String> printerIds = new ArrayList<>();
-        LicenceType licenceType = LicenceType.AUTOMAKER_FREE;
-        
-        for (String licenceLine : licenceInfo) 
-        {
-            String[] lineInfo = licenceLine.split(":");
-            String licenceInfoKey = lineInfo[0];
-            String licenceInfoValue = lineInfo[1];
-            
-            switch(licenceInfoKey) 
+            String[] licenceInfo = licenceText.split("\\r?\\n");
+
+            String owner = "";
+            String licenceEndDateString = "";
+            List<String> printerIds = new ArrayList<>();
+            LicenceType licenceType = LicenceType.AUTOMAKER_FREE;
+
+            for (String licenceLine : licenceInfo) 
             {
-                case OWNER_KEY:
-                    owner = licenceInfoValue;
-                    break;
-                case END_DATE_KEY:
-                    licenceEndDateString = licenceInfoValue;
-                    break;
-                case PRINTER_ID_KEY:
-                    printerIds.add(licenceInfoValue);
-                    break;
-                case LICENSE_TYPE_KEY:
-                    if(licenceInfoValue.equals(LicenceType.AUTOMAKER_FREE.toString()))
-                    {
-                        licenceType = LicenceType.AUTOMAKER_FREE;
-                    } 
-                    else if(licenceInfoValue.equals(LicenceType.AUTOMAKER_PRO.toString())) 
-                    {
-                        licenceType = LicenceType.AUTOMAKER_PRO;
-                    }
+                String[] lineInfo = licenceLine.split(":");
+                String licenceInfoKey = lineInfo[0];
+                String licenceInfoValue = lineInfo[1];
+
+                switch(licenceInfoKey) 
+                {
+                    case OWNER_KEY:
+                        owner = licenceInfoValue;
+                        break;
+                    case END_DATE_KEY:
+                        licenceEndDateString = licenceInfoValue;
+                        break;
+                    case PRINTER_ID_KEY:
+                        printerIds.add(licenceInfoValue);
+                        break;
+                    case LICENSE_TYPE_KEY:
+                        if (licenceInfoValue.equals(LicenceType.AUTOMAKER_FREE.toString()))
+                        {
+                            licenceType = LicenceType.AUTOMAKER_FREE;
+                        } 
+                        else if (licenceInfoValue.equals(LicenceType.AUTOMAKER_PRO.toString())) 
+                        {
+                            licenceType = LicenceType.AUTOMAKER_PRO;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            LocalDate licenceEndDate = parseDate(licenceEndDateString);
+            if (licenceEndDate != null)
+            {
+                Licence licence = new Licence(licenceType, licenceEndDate, owner, printerIds);
+                STENO.debug("Licence file read with type of: " + licence.getLicenceType());
+                return Optional.of(licence);
             }
         }
-        
-        LocalDate licenceEndDate = parseDate(licenceEndDateString);
-        
-        Licence licence = new Licence(licenceType, licenceEndDate, owner, printerIds);
-        STENO.debug("Licence file read with type of: " + licence.getLicenceType());
-        return Optional.of(licence);
+
+        return Optional.empty();
     }
     
     private static String decryptLine(String encryptedLine, PublicKey key) 
@@ -145,16 +151,9 @@ public class LicenceUtilities
             cipher.init(Cipher.DECRYPT_MODE, key);
             return new String(cipher.doFinal(Base64.decodeBase64(encryptedLine)), "UTF-8");
         } 
-        catch (NoSuchAlgorithmException 
-                | NoSuchPaddingException 
-                | IllegalBlockSizeException 
-                | BadPaddingException 
+        catch (GeneralSecurityException 
                 | UnsupportedEncodingException ex) {
             STENO.exception("Error when obtaining cipher instance.", ex);
-        } 
-        catch (InvalidKeyException ex) 
-        {
-            STENO.exception("Error occured when decrypting licence.", ex);
         }
         return null;
     }
@@ -167,8 +166,15 @@ public class LicenceUtilities
      */
     private static LocalDate parseDate(String date) 
     {
-        DateTimeFormatter dtf = DateTimeFormatter.ISO_DATE;
-        LocalDate parsedDate = LocalDate.parse(date, dtf);
+        LocalDate parsedDate = null;
+        try {
+            DateTimeFormatter dtf = DateTimeFormatter.ISO_DATE;
+            parsedDate = LocalDate.parse(date, dtf);
+        }
+        catch (DateTimeParseException ex)
+        {
+            STENO.exception("Error occured when parsing date.", ex);            
+        }
         return parsedDate;
     }
     
